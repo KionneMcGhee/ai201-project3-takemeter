@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TakeMeter</title>
+<style>
+:root { color-scheme: dark; font: 16px/1.5 system-ui,sans-serif; background: #10131c; color: #f3f4f8; --muted:#b4bdce; --line:#363f55; --lime:#d5ef88 }
+* { box-sizing: border-box }
+body { margin: 0; }
+main { max-width: 980px; margin: 0 auto; padding: 66px 24px; }
+h1 { font-size: clamp(3rem, 10vw, 5.6rem); letter-spacing:-.075em; line-height: .94; margin: .2em 0; }
+header > p { margin: 20px 0 32px; color: var(--muted); }
+.grid { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(240px,1fr); gap: 18px; }
+section { background: #1a2030; border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+h2 { font-size: 1.15rem; margin-top: 0; }
+label { display:block; font-weight: 620; margin-bottom: 8px; }
+textarea { resize: vertical; width:100%; min-height: 170px; padding: 13px; border:1px solid var(--line); background:#111626; color:inherit; border-radius: 9px; font:inherit; }
+button,select { font: inherit; border-radius: 8px; padding: 9px 13px; }
+button { background:var(--lime); color:#192215; border:0; cursor:pointer; font-weight:700; }
+button:disabled { opacity:.55; cursor:wait; }
+select { max-width:100%; background:#252d42; color:inherit; border:1px solid var(--line); }
+.controls { display:flex; gap:9px; flex-wrap:wrap; margin-top:12px; }
+p,dd { color: var(--muted); }
+.result { font-size:1.65rem; font-weight:740; color:var(--lime); margin:.3em 0; }
+#probabilities { display: grid; gap: 8px; padding:0; list-style:none; }
+#probabilities li { display:flex; justify-content:space-between; gap:15px; font-variant-numeric:tabular-nums; }
+#source a { color:var(--lime); }
+dt { font-weight:700; }
+dd { margin:0 0 12px; }
+dl { margin-bottom:0; }
+footer { margin-top:25px; color:var(--muted); }
+:focus-visible { outline:2px solid var(--lime); outline-offset:3px; }
+@media (max-width:720px) { main{padding-top:38px} .grid{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<main>
+<header><h1>TakeMeter</h1><p>Classify how a Movies &amp; TV answer supports its claim.</p></header>
+<div class="grid">
+  <section aria-label="Classify an answer">
+    <form id="classifier">
+      <label for="text">Answer text</label>
+      <textarea id="text" maxlength="10000" placeholder="Paste a Movies &amp; TV answer…" required></textarea>
+      <div class="controls">
+        <button id="submit" type="submit">Classify</button>
+        <select id="sample" aria-label="Load a held-out example">
+          <option value="">Load a held-out example</option>
+        </select>
+      </div>
+      <p id="source"></p>
+    </form>
+  </section>
+  <section aria-labelledby="result-title">
+    <h2 id="result-title">Prediction</h2>
+    <div aria-live="polite">
+      <p id="result" class="result">Ready</p>
+      <p id="confidence">Confidence appears after classification.</p>
+      <ul id="probabilities"></ul>
+      <p id="reference"></p>
+    </div>
+  </section>
+</div>
+<footer>
+  <dl>
+    <dt>Sourced</dt><dd>Uses a traceable source to support the main claim.</dd>
+    <dt>Reasoned</dt><dd>Supports the claim with inference or observations.</dd>
+    <dt>Asserted</dt><dd>States a claim without visible supporting evidence.</dd>
+  </dl>
+</footer>
+</main>
+<script id="model" type="application/json">__MODEL_DATA__</script>
+<script>
+/* __INFERENCE_JS__ */
+</script>
+<script>
+const form = document.querySelector('#classifier');
+const input = document.querySelector('#text');
+const sample = document.querySelector('#sample');
+const submit = document.querySelector('#submit');
+const result = document.querySelector('#result');
+const confidence = document.querySelector('#confidence');
+const list = document.querySelector('#probabilities');
+const reference = document.querySelector('#reference');
+const source = document.querySelector('#source');
+const saved = JSON.parse(document.querySelector('#model').textContent);
+const classify = buildTakeMeter(saved);
+const examples = saved.examples;
+const percent = value => (value * 100).toFixed(1) + '%';
+
+function clearSource() {
+  sample.value = '';
+  source.replaceChildren();
+  reference.textContent = '';
+}
+input.addEventListener('input', () => {
+  clearSource();
+  result.textContent = 'Ready';
+  confidence.textContent = 'Confidence appears after classification.';
+  list.replaceChildren();
+});
+examples.forEach((row, index) => sample.add(new Option('Example ' + (index + 1), String(index))));
+sample.addEventListener('change', () => {
+  if (sample.value === '') { clearSource(); return; }
+  const selected = examples[Number(sample.value)];
+  input.value = selected.text;
+  reference.textContent = '';
+  result.textContent = 'Ready';
+  confidence.textContent = 'Classify this example to see its score.';
+  list.replaceChildren();
+  const link = document.createElement('a');
+  link.textContent = 'View original answer ' + selected.answer_id;
+  link.href = selected.source_url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  source.replaceChildren(selected.author + ' · ', link, ' · ' + selected.license);
+});
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  submit.disabled = true;
+  input.readOnly = true;
+  const selected = sample.value === '' ? null : examples[Number(sample.value)];
+  const sampleWasDisabled = sample.disabled;
+  sample.disabled = true;
+  list.replaceChildren();
+  reference.textContent = '';
+  result.textContent = 'Classifying…';
+  confidence.textContent = '';
+  try {
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const data = classify(input.value);
+    result.textContent = data.label;
+    confidence.textContent = percent(data.confidence) + ' model confidence';
+    for (const [label, value] of Object.entries(data.probabilities)) {
+      const row = document.createElement('li');
+      const detail = document.createElement('span');
+      detail.textContent = percent(value);
+      row.append(label, detail);
+      list.append(row);
+    }
+    if (selected) reference.textContent = 'Reference label: ' + selected.label;
+  } catch (error) {
+    result.textContent = 'Unable to classify';
+    confidence.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+    input.readOnly = false;
+    sample.disabled = sampleWasDisabled;
+  }
+});
+</script>
+</body>
+</html>

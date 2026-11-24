@@ -1,0 +1,5 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+groq_baseline_results.json
